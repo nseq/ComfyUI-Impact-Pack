@@ -1570,6 +1570,16 @@ class MaskDetailerPipe:
 
 
 class DetailerForEachTest(DetailerForEach):
+    @classmethod
+    def INPUT_TYPES(s):
+        current_inputs = super().INPUT_TYPES()
+        current_inputs["required"].update({
+            "sigma_factor": ("FLOAT", {"default": 1, "min": 0, "max": 100, "step": 0.001}),
+            "sigma_start": ("FLOAT", {"default": 0, "min": 0, "max": 1, "step": 0.001}),
+            "sigma_end": ("FLOAT", {"default": 1, "min": 0, "max": 1, "step": 0.001})
+        })
+        return current_inputs
+
     RETURN_TYPES = ("IMAGE", "IMAGE", "IMAGE", "IMAGE", "IMAGE")
     RETURN_NAMES = ("image", "cropped", "cropped_refined", "cropped_refined_alpha", "cnet_images")
     OUTPUT_IS_LIST = (False, True, True, True, True)
@@ -1579,18 +1589,39 @@ class DetailerForEachTest(DetailerForEach):
     CATEGORY = "ImpactPack/Detailer"
 
     def doit(self, image, segs, model, clip, vae, guide_size, guide_size_for, max_size, seed, steps, cfg, sampler_name,
-             scheduler, positive, negative, denoise, feather, noise_mask, force_inpaint, wildcard, detailer_hook=None,
-             cycle=1, inpaint_model=False, noise_mask_feather=0, scheduler_func_opt=None, tiled_encode=False, tiled_decode=False):
+             scheduler, positive, negative, denoise, feather, noise_mask, force_inpaint, wildcard,
+             sigma_factor, sigma_start, sigma_end,
+             detailer_hook=None, cycle=1, inpaint_model=False, noise_mask_feather=0,
+             tiled_encode=False, tiled_decode=False):
+
+        from .impact_sampling import calculate_sigmas
 
         if len(image) > 1:
             raise Exception('[Impact Pack] ERROR: DetailerForEach does not allow image batches.\nPlease refer to https://github.com/ltdrdata/ComfyUI-extension-tutorials/blob/Main/ComfyUI-Impact-Pack/tutorial/batching-detailer.md for more information.')
+
+        def custom_scheduler(model, sampler_name, steps):
+            # Get original sigmas
+            original_sigmas = calculate_sigmas(model, sampler_name, scheduler, steps)
+            
+            # Clone the sigmas to ensure the input is not modified
+            sigmas = original_sigmas.clone()
+            
+            # Apply the multiplication in the specified range
+            total_sigmas = len(sigmas)
+            start_idx = int(sigma_start * total_sigmas)
+            end_idx = int(sigma_end * total_sigmas)
+
+            for i in range(start_idx, end_idx):
+                sigmas[i] *= sigma_factor
+
+            return sigmas
 
         enhanced_img, cropped, cropped_enhanced, cropped_enhanced_alpha, cnet_pil_list, new_segs = \
             DetailerForEach.do_detail(image, segs, model, clip, vae, guide_size, guide_size_for, max_size, seed, steps,
                                       cfg, sampler_name, scheduler, positive, negative, denoise, feather, noise_mask,
                                       force_inpaint, wildcard, detailer_hook,
                                       cycle=cycle, inpaint_model=inpaint_model, noise_mask_feather=noise_mask_feather, 
-                                      scheduler_func_opt=scheduler_func_opt, tiled_encode=tiled_encode, tiled_decode=tiled_decode)
+                                      scheduler_func_opt=custom_scheduler, tiled_encode=tiled_encode, tiled_decode=tiled_decode)
 
         # set fallback image
         if len(cropped) == 0:
